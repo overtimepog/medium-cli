@@ -146,6 +146,18 @@ class User:
         title = channel.get("title", "")
         link = channel.get("link", "")
 
+        # Handle case where link is a list (multiple <link> children)
+        if isinstance(link, list):
+            # Find the Medium user URL link
+            for item in link:
+                if isinstance(item, str) and "medium.com/@" in item:
+                    link = item
+                    break
+            else:
+                link = link[0] if link else ""
+        if isinstance(link, dict):
+            link = link.get("text", "")
+
         # Extract username from URL: https://medium.com/@username
         username = ""
         match = re.search(r"medium\.com/(@[\w.-]+)", link)
