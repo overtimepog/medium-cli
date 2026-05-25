@@ -1,0 +1,2 @@
+[console_scripts]
+medium = medium_cli.cli:main
