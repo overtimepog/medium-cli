@@ -1,8 +1,10 @@
 pyproject.toml
 src/medium_cli/__init__.py
+src/medium_cli/models.py
 src/medium_cli.egg-info/PKG-INFO
 src/medium_cli.egg-info/SOURCES.txt
 src/medium_cli.egg-info/dependency_links.txt
 src/medium_cli.egg-info/entry_points.txt
 src/medium_cli.egg-info/requires.txt
 src/medium_cli.egg-info/top_level.txt
+tests/test_models.py
