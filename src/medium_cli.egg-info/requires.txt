@@ -1,9 +1,0 @@
-click>=8.0
-httpx>=0.24
-rich>=13.0
-beautifulsoup4>=4.12
-lxml>=4.9
-
-[dev]
-pytest>=7.0
-pytest-httpx>=0.30
