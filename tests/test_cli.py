@@ -97,6 +97,96 @@ class TestUserCommand:
         assert "Alice" in result.output
 
 
+class TestReadCommand:
+    """`medium read` command."""
+
+    ARTICLE_URL = "https://karpathy.medium.com/software-2-0-abc123"
+
+    def test_read_shows_article_content(self, httpx_mock):
+        """medium read <url> shows article title, author, and cleaned content."""
+        httpx_mock.add_response(
+            url="https://medium.com/feed/@karpathy",
+            method="GET",
+            text=_user_rss_with_body(
+                "@karpathy", "Andrej Karpathy",
+                [("Software 2.0", self.ARTICLE_URL,
+                  "Andrej Karpathy", "Sat, 11 Nov 2017 12:00:00 GMT",
+                  ["Programming"],
+                  "<p>The classical stack of Software 1.0.</p>"
+                  "<h3>A New Kind of Software</h3>"
+                  "<p>Software 2.0 is written in neural network weights.</p>")],
+            ),
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["read", self.ARTICLE_URL])
+
+        assert result.exit_code == 0
+        assert "Software 2.0" in result.output
+        assert "Andrej Karpathy" in result.output
+        assert "classical stack" in result.output
+        assert "neural network weights" in result.output
+
+    def test_read_article_not_found(self, httpx_mock):
+        """medium read shows error when article not in feed."""
+        httpx_mock.add_response(
+            url="https://medium.com/feed/@karpathy",
+            method="GET",
+            text=_user_rss_with_body(
+                "@karpathy", "Andrej Karpathy",
+                [("Other Post", "https://karpathy.medium.com/other-789",
+                  "Andrej Karpathy", "Mon, 20 Mar 2024 10:00:00 GMT",
+                  [], "<p>something else</p>")],
+            ),
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["read", self.ARTICLE_URL])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
+
+    def test_read_bad_url(self):
+        """medium read shows error for non-Medium URLs."""
+        runner = CliRunner()
+        result = runner.invoke(main, ["read", "https://twitter.com/x"])
+
+        assert result.exit_code == 1
+        assert "Could not parse" in result.output
+
+
+class TestTrendingCommand:
+    """`medium trending` command."""
+
+    def test_trending_shows_articles(self, httpx_mock):
+        """medium trending shows popular articles table."""
+        httpx_mock.add_response(
+            url="https://medium.com/feed/tag/popular",
+            method="GET",
+            text=_tag_rss(["Hot Post 1", "Hot Post 2"]),
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["trending"])
+
+        assert result.exit_code == 0
+        assert "Hot Post 1" in result.output
+        assert "Hot Post 2" in result.output
+
+    def test_trending_network_error(self, httpx_mock):
+        """medium trending shows error on failure."""
+        httpx_mock.add_exception(
+            url="https://medium.com/feed/tag/popular",
+            exception=Exception("Down"),
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["trending"])
+
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+
 class TestNoArgs:
     """Default help output."""
 
@@ -151,5 +241,38 @@ def _user_rss(username: str, name: str, titles: list[str]) -> str:
         <url>https://cdn-images-1.medium.com/fit/c/400/400/1*abc.jpeg</url>
     </image>
 {items}
+</channel>
+</rss>"""
+
+
+def _user_rss_with_body(
+    username: str, name: str,
+    items: list[tuple[str, str, str, str, list[str], str]],
+) -> str:
+    """Build a user RSS feed XML with content:encoded in each item."""
+    items_xml = ""
+    for title, link, author, pub_date, categories, body in items:
+        cats = "".join(f"<category>{c}</category>" for c in categories)
+        items_xml += f"""
+    <item>
+        <title><![CDATA[{title}]]></title>
+        <link>{link}</link>
+        <dc:creator><![CDATA[{author}]]></dc:creator>
+        <pubDate>{pub_date}</pubDate>
+        {cats}
+        <encoded><![CDATA[{body}]]></encoded>
+    </item>"""
+
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     version="2.0">
+<channel>
+    <title><![CDATA[Stories by {name} on Medium]]></title>
+    <link>https://medium.com/{username}</link>
+    <image>
+        <url>https://cdn-images-1.medium.com/fit/c/400/400/1*abc.jpeg</url>
+    </image>
+{items_xml}
 </channel>
 </rss>"""

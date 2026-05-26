@@ -2,13 +2,37 @@
 
 from __future__ import annotations
 
+import re as _re
 import xml.etree.ElementTree as ET
+from html.parser import HTMLParser
 from typing import Tuple
+from urllib.parse import urlparse
 
 import httpx
 from medium_cli.models import Article, User
 
 MEDIUM_BASE = "https://medium.com"
+
+
+class _TextStripper(HTMLParser):
+    """Extract text content from HTML, stripping all tags."""
+
+    def __init__(self):
+        super().__init__()
+        self.text: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.text.append(data)
+
+    def get_text(self) -> str:
+        return " ".join(self.text).strip()
+
+
+def _clean_html(html: str) -> str:
+    """Strip HTML tags and return plain text."""
+    stripper = _TextStripper()
+    stripper.feed(html)
+    return stripper.get_text()
 
 
 class MediumClient:
@@ -56,7 +80,88 @@ class MediumClient:
         articles = self._parse_feed_items(root)
         return user, articles
 
+    def get_article(self, article_url: str) -> Tuple[Article, str]:
+        """Fetch a full article by URL, including cleaned text content.
+
+        Parses the username/publication from the URL, fetches their RSS feed,
+        finds the matching article, and returns the Article + cleaned text.
+
+        Args:
+            article_url: Full Medium article URL.
+
+        Returns:
+            Tuple of (Article, cleaned_text_content).
+
+        Raises:
+            ValueError: If the URL can't be parsed or article not found.
+            ConnectionError: On network errors.
+        """
+        username = self._parse_username_from_url(article_url)
+        url = f"{self._base}/feed/@{username}"
+        root = self._fetch_rss(url, f"@{username}")
+
+        channel = root.find("channel")
+        if channel is None:
+            raise ValueError(f"Article not found in feed for '{username}'")
+
+        for item in channel.findall("item"):
+            link = _get_text(item, "link")
+            # Strip query params for comparison (RSS adds ?source=rss-...)
+            link_clean = link.split("?")[0].rstrip("/")
+            target_clean = article_url.split("?")[0].rstrip("/")
+            # Match exact, or match as prefix (user may paste URL without ID suffix)
+            if link_clean == target_clean or link_clean.startswith(target_clean + "-"):
+                article = self._parse_rss_item(item)
+                encoded = _get_text(item, "encoded")
+                content = _clean_html(encoded) if encoded else ""
+                return article, content
+
+        raise ValueError(f"Article not found in feed for '{username}'")
+
+    def get_trending(self) -> list[Article]:
+        """Get trending/popular articles from Medium.
+
+        Returns:
+            List of currently popular Articles.
+
+        Raises:
+            ConnectionError: On network errors.
+        """
+        url = f"{self._base}/feed/tag/popular"
+        root = self._fetch_rss(url, "trending")
+        return self._parse_feed_items(root)
+
     # ─── Internal Helpers ─────────────────────────────────────────
+
+    def _parse_username_from_url(self, article_url: str) -> str:
+        """Extract username from a Medium article URL.
+
+        Handles:
+          - https://username.medium.com/slug-123
+          - https://medium.com/@username/slug-123
+          - https://medium.com/publication/slug-123
+        """
+        parsed = urlparse(article_url)
+        hostname = parsed.hostname or ""
+
+        # Custom domain: username.medium.com
+        if hostname.endswith(".medium.com"):
+            username = hostname.split(".")[0]
+            if username and username != "www":
+                return username
+
+        # medium.com/@username/... or medium.com/publication/...
+        if "medium.com" in hostname:
+            path = parsed.path.strip("/")
+            parts = path.split("/")
+            if parts:
+                first = parts[0]
+                if first.startswith("@"):
+                    return first.lstrip("@")
+                # Publication: medium.com/publication-name/...
+                return first
+
+        raise ValueError(f"Could not parse username from URL: {article_url}")
 
     def _fetch_rss(self, url: str, label: str) -> ET.Element:
         """Fetch and parse an RSS feed, normalizing XML namespace."""
@@ -105,10 +210,10 @@ class MediumClient:
     def _element_to_dict(element: ET.Element) -> object:
         """Convert an ElementTree element into a nested structure.
 
-        Leaf elements (text only, no children, no attrs) → plain string.
-        Elements with children or attrs → dict.
+        Leaf elements (text only, no children, no attrs) -> plain string.
+        Elements with children or attrs -> dict.
         """
-        # If it's a leaf — just text, no children, no attrs — return string
+        # If it's a leaf -- just text, no children, no attrs -- return string
         text = (element.text or "").strip()
         if not element.attrib and len(element) == 0:
             return text
@@ -120,7 +225,7 @@ class MediumClient:
         # Attributes
         result.update(element.attrib)
 
-        # Children — group by tag name
+        # Children -- group by tag name
         children: dict[str, list] = {}
         for child in element:
             tag = child.tag.split("}")[-1]  # strip namespace
@@ -134,16 +239,14 @@ class MediumClient:
         return result
 
 
-# ─── XML Helpers ───────────────────────────────────────────────────
+# XML Helpers ---------------------------------------------------------
 
 def _strip_namespaces(xml_str: str) -> str:
     """Remove XML namespace declarations to simplify parsing."""
-    import re
-
     # Remove xmlns attributes
-    xml_str = re.sub(r'\s+xmlns[^=]*="[^"]*"', "", xml_str)
-    # Remove namespace prefixes from tags: <dc:creator> → <creator>
-    xml_str = re.sub(r"(</?)(\w+):(\w+)", r"\1\3", xml_str)
+    xml_str = _re.sub(r'\s+xmlns[^=]*="[^"]*"', "", xml_str)
+    # Remove namespace prefixes from tags: <dc:creator> -> <creator>
+    xml_str = _re.sub(r"(</?)(\w+):(\w+)", r"\1\3", xml_str)
     return xml_str
 
 

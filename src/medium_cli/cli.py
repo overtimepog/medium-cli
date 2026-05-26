@@ -88,6 +88,65 @@ def user(username: str) -> None:
     console.print(table)
 
 
+@main.command()
+@click.argument("url")
+def read(url: str) -> None:
+    """Read a Medium article by URL.
+
+    Fetches the full article content from the author's RSS feed
+    and displays it cleaned and formatted.
+    """
+    client = _get_client()
+    try:
+        article, content = client.get_article(url)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+    except ConnectionError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    console.print(f"\n[bold]{article.title}[/bold]")
+    console.print(f"[dim]by {article.author}[/dim]")
+    if article.published_at:
+        console.print(f"[dim]{article.published_at.strftime('%Y-%m-%d')}[/dim]")
+    console.print()
+
+    # Print content with wrapped paragraphs
+    for para in content.split("\n"):
+        para = para.strip()
+        if para:
+            console.print(para)
+            console.print()
+
+
+@main.command()
+def trending() -> None:
+    """Show trending/popular articles on Medium."""
+    client = _get_client()
+    try:
+        articles = client.get_trending()
+    except ConnectionError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    if not articles:
+        console.print("[yellow]No trending articles found.[/yellow]")
+        return
+
+    table = Table(title="Trending on Medium")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Title")
+    table.add_column("Author")
+    table.add_column("Date")
+
+    for i, a in enumerate(articles, 1):
+        date_str = a.published_at.strftime("%Y-%m-%d") if a.published_at else ""
+        table.add_row(str(i), a.title, a.author, date_str)
+
+    console.print(table)
+
+
 def _get_client() -> MediumClient:
     """Create a MediumClient instance."""
     return MediumClient()
